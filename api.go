@@ -116,17 +116,30 @@ func StatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer db.Close()
 
-	var reference string
-	// name := "da4cb85a-01cf-42d9-a67a-e7b64ffa7401"
-	// err = db.QueryRow("select * from transactions where reference = ?", 1).Scan(&name)
-	err = db.QueryRow("select reference from transactions where reference = ?", 1).Scan("da4cb85a-01cf-42d9-a67a-e7b64ffa7401")
+	var (
+		id        int
+		reference string
+	)
+	rows, err := db.Query("select id, reference from transactions where id = ?", 1)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(reference)
+	defer rows.Close()
+	for rows.Next() {
+		err := rows.Scan(&id, &reference)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Println(id, reference)
 
-	// w.WriteHeader(http.StatusOK)
-	// w.Header().Set("Content-Type", "application/json")
-	// // io.WriteString(w, `{"result": true}`)
-	// io.WriteString(w, resultDelete)
+		w.WriteHeader(http.StatusOK)
+		// w.Header().Set("Content-Type", "application/json")
+		// // io.WriteString(w, `{"result": true}`)
+		io.WriteString(w, reference)
+
+	}
+	err = rows.Err()
+	if err != nil {
+		log.Fatal(err)
+	}
 }
