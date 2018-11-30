@@ -1,4 +1,4 @@
-package worker
+package main
 
 import (
 	"fmt"
@@ -51,6 +51,8 @@ func main() {
 		fmt.Println("Delete Error", err)
 		return
 	}
+
+	fmt.Println("Message Deleted", resultDelete)
 
 	// @TODO -- mysql, update status of request
 

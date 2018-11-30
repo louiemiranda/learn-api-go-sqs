@@ -54,7 +54,7 @@ func CreateSQSHandler(w http.ResponseWriter, r *http.Request) {
 	qURL := "https://sqs.ap-southeast-1.amazonaws.com/799216407651/test"
 
 	result, err := svc.SendMessage(&sqs.SendMessageInput{
-		DelaySeconds: aws.Int64(0),
+		DelaySeconds: aws.Int64(10),
 		MessageAttributes: map[string]*sqs.MessageAttributeValue{
 			"Title": &sqs.MessageAttributeValue{
 				DataType:    aws.String("String"),
