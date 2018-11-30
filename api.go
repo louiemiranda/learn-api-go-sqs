@@ -1,10 +1,13 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+
+	_ "github.com/go-sql-driver/mysql"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -16,11 +19,12 @@ func main() {
 	fmt.Println("STARTING API LOADER...")
 
 	r := mux.NewRouter()
-	// Routes consist of a path and a handler function.
-	r.HandleFunc("/", HomeHandler)
 
-	r.HandleFunc("/api/create/sqs", CreateSQSHandler)
-	r.HandleFunc("/api/receive/sqs", ReceiveSQSHandler)
+	r.HandleFunc("/", HomeHandler)
+	r.HandleFunc("/api/sqs", CreateSQSHandler).
+		Methods("POST")
+	r.HandleFunc("/api/sqs/{id}", StatusHandler).
+		Methods("GET")
 
 	// Bind to a port and pass our router in
 	log.Fatal(http.ListenAndServe("localhost:8080", r))
@@ -39,6 +43,12 @@ func CreateSQSHandler(w http.ResponseWriter, r *http.Request) {
 	}))
 
 	svc := sqs.New(sess)
+
+	db, err := sql.Open("mysql", "root:password@/queue")
+	if err != nil {
+		panic(err.Error()) // Just for example purpose. You should use proper error handling instead of panic
+	}
+	defer db.Close()
 
 	// URL to our queue
 	qURL := "https://sqs.ap-southeast-1.amazonaws.com/799216407651/test"
@@ -70,60 +80,66 @@ func CreateSQSHandler(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Println("Success", *result.MessageId)
 
+	// INSERT TO DATABASE
+	stmt, err := db.Prepare("INSERT INTO transactions (reference, date_created) VALUES(?, NOW())")
+	if err != nil {
+		log.Fatal(err)
+	}
+	res, err := stmt.Exec(*result.MessageId)
+	if err != nil {
+		log.Fatal(err)
+	}
+	lastId, err := res.LastInsertId()
+	if err != nil {
+		log.Fatal(err)
+	}
+	rowCnt, err := res.RowsAffected()
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("ID = %d, affected = %d\n", lastId, rowCnt)
+
 	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/json")
 	// io.WriteString(w, `{"result": true}`)
 	io.WriteString(w, *result.MessageId)
 }
 
-func ReceiveSQSHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("PROCESSING...")
+func StatusHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("VERIFYING STATUS...")
 
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
+	// QUERY FROM DATABASE
 
-	svc := sqs.New(sess)
-
-	qURL := "https://sqs.ap-southeast-1.amazonaws.com/799216407651/test"
-
-	result, err := svc.ReceiveMessage(&sqs.ReceiveMessageInput{
-		AttributeNames: []*string{
-			aws.String(sqs.MessageSystemAttributeNameSentTimestamp),
-		},
-		MessageAttributeNames: []*string{
-			aws.String(sqs.QueueAttributeNameAll),
-		},
-		QueueUrl:            &qURL,
-		MaxNumberOfMessages: aws.Int64(1),
-		VisibilityTimeout:   aws.Int64(20), // 20 seconds
-		WaitTimeSeconds:     aws.Int64(0),
-	})
-
+	db, err := sql.Open("mysql", "root:password@/queue")
 	if err != nil {
-		fmt.Println("Error", err)
-		return
+		panic(err.Error()) // Just for example purpose. You should use proper error handling instead of panic
 	}
+	defer db.Close()
 
-	if len(result.Messages) == 0 {
-		fmt.Println("Received no messages")
-		return
-	}
-
-	resultDelete, err := svc.DeleteMessage(&sqs.DeleteMessageInput{
-		QueueUrl:      &qURL,
-		ReceiptHandle: result.Messages[0].ReceiptHandle,
-	})
-
+	var (
+		id        int
+		reference string
+	)
+	rows, err := db.Query("select id, reference from transactions where id = ?", 1)
 	if err != nil {
-		fmt.Println("Delete Error", err)
-		return
+		log.Fatal(err)
 	}
+	defer rows.Close()
+	for rows.Next() {
+		err := rows.Scan(&id, &reference)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Println(id, reference)
 
-	fmt.Println("Message Deleted", resultDelete)
+		w.WriteHeader(http.StatusOK)
+		// w.Header().Set("Content-Type", "application/json")
+		// // io.WriteString(w, `{"result": true}`)
+		io.WriteString(w, reference)
 
-	// w.WriteHeader(http.StatusOK)
-	// w.Header().Set("Content-Type", "application/json")
-	// // io.WriteString(w, `{"result": true}`)
-	// io.WriteString(w, resultDelete)
+	}
+	err = rows.Err()
+	if err != nil {
+		log.Fatal(err)
+	}
 }
