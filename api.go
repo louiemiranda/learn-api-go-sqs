@@ -78,11 +78,10 @@ func CreateSQSHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// @TODO -- insert to mysql db and return a reference
-
 	fmt.Println("Success", *result.MessageId)
 
-	stmt, err := db.Prepare("INSERT INTO transactions (reference) VALUES(?)")
+	// INSERT TO DATABASE
+	stmt, err := db.Prepare("INSERT INTO transactions (reference, date_created) VALUES(?, NOW())")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -109,7 +108,22 @@ func CreateSQSHandler(w http.ResponseWriter, r *http.Request) {
 func StatusHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("VERIFYING STATUS...")
 
-	// @TODO -- connect to mysql db and return status
+	// QUERY FROM DATABASE
+
+	db, err := sql.Open("mysql", "root:password@/queue")
+	if err != nil {
+		panic(err.Error()) // Just for example purpose. You should use proper error handling instead of panic
+	}
+	defer db.Close()
+
+	var reference string
+	// name := "da4cb85a-01cf-42d9-a67a-e7b64ffa7401"
+	// err = db.QueryRow("select * from transactions where reference = ?", 1).Scan(&name)
+	err = db.QueryRow("select reference from transactions where reference = ?", 1).Scan("da4cb85a-01cf-42d9-a67a-e7b64ffa7401")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(reference)
 
 	// w.WriteHeader(http.StatusOK)
 	// w.Header().Set("Content-Type", "application/json")
