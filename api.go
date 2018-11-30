@@ -1,10 +1,13 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+
+	_ "github.com/go-sql-driver/mysql"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -41,6 +44,12 @@ func CreateSQSHandler(w http.ResponseWriter, r *http.Request) {
 
 	svc := sqs.New(sess)
 
+	db, err := sql.Open("mysql", "root:password@/queue")
+	if err != nil {
+		panic(err.Error()) // Just for example purpose. You should use proper error handling instead of panic
+	}
+	defer db.Close()
+
 	// URL to our queue
 	qURL := "https://sqs.ap-southeast-1.amazonaws.com/799216407651/test"
 
@@ -72,6 +81,24 @@ func CreateSQSHandler(w http.ResponseWriter, r *http.Request) {
 	// @TODO -- insert to mysql db and return a reference
 
 	fmt.Println("Success", *result.MessageId)
+
+	stmt, err := db.Prepare("INSERT INTO transactions (reference) VALUES(?)")
+	if err != nil {
+		log.Fatal(err)
+	}
+	res, err := stmt.Exec(*result.MessageId)
+	if err != nil {
+		log.Fatal(err)
+	}
+	lastId, err := res.LastInsertId()
+	if err != nil {
+		log.Fatal(err)
+	}
+	rowCnt, err := res.RowsAffected()
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("ID = %d, affected = %d\n", lastId, rowCnt)
 
 	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/json")
