@@ -9,10 +9,18 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 
+	"errors"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/gorilla/mux"
+)
+
+const (
+	DriverName     = "mysql"
+	DataSourceName = "root:password@/queue"
+	QueueEndpoint  = "https://sqs.ap-southeast-1.amazonaws.com/799216407651/test"
 )
 
 func main() {
@@ -23,7 +31,7 @@ func main() {
 	r.HandleFunc("/", HomeHandler)
 	r.HandleFunc("/api/sqs", CreateSQSHandler).
 		Methods("POST")
-	r.HandleFunc("/api/sqs/{id}", StatusHandler).
+	r.HandleFunc("/api/sqs", StatusHandler).
 		Methods("GET")
 
 	// Bind to a port and pass our router in
@@ -36,7 +44,16 @@ func HomeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func CreateSQSHandler(w http.ResponseWriter, r *http.Request) {
+
 	fmt.Println("RECEIVING...")
+
+	status := r.FormValue("status")
+
+	if status == "" {
+		err := errors.New("All are mandatory fields")
+		log.Fatal(err)
+		return
+	}
 
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -44,29 +61,21 @@ func CreateSQSHandler(w http.ResponseWriter, r *http.Request) {
 
 	svc := sqs.New(sess)
 
-	db, err := sql.Open("mysql", "root:password@/queue")
+	db, err := sql.Open(DriverName, DataSourceName)
 	if err != nil {
 		panic(err.Error()) // Just for example purpose. You should use proper error handling instead of panic
 	}
 	defer db.Close()
 
 	// URL to our queue
-	qURL := "https://sqs.ap-southeast-1.amazonaws.com/799216407651/test"
+	qURL := QueueEndpoint
 
 	result, err := svc.SendMessage(&sqs.SendMessageInput{
-		DelaySeconds: aws.Int64(10),
+		DelaySeconds: aws.Int64(0),
 		MessageAttributes: map[string]*sqs.MessageAttributeValue{
-			"Title": &sqs.MessageAttributeValue{
+			"status": &sqs.MessageAttributeValue{
 				DataType:    aws.String("String"),
-				StringValue: aws.String("The Whistler"),
-			},
-			"Author": &sqs.MessageAttributeValue{
-				DataType:    aws.String("String"),
-				StringValue: aws.String("John Grisham"),
-			},
-			"WeeksOn": &sqs.MessageAttributeValue{
-				DataType:    aws.String("Number"),
-				StringValue: aws.String("6"),
+				StringValue: aws.String(status),
 			},
 		},
 		MessageBody: aws.String("Data Dump"),
@@ -81,7 +90,7 @@ func CreateSQSHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Success", *result.MessageId)
 
 	// INSERT TO DATABASE
-	stmt, err := db.Prepare("INSERT INTO transactions (reference, date_created) VALUES(?, NOW())")
+	stmt, err := db.Prepare("INSERT INTO transactions (reference, date_created, status) VALUES(?, NOW(), 'pending')")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -106,11 +115,20 @@ func CreateSQSHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func StatusHandler(w http.ResponseWriter, r *http.Request) {
+
+	requestId := r.FormValue("reference")
+
+	if requestId == "" {
+		err := errors.New("Reference is mandatory field")
+		fmt.Println(err)
+		return
+	}
+
 	fmt.Println("VERIFYING STATUS...")
 
 	// QUERY FROM DATABASE
 
-	db, err := sql.Open("mysql", "root:password@/queue")
+	db, err := sql.Open(DriverName, DataSourceName)
 	if err != nil {
 		panic(err.Error()) // Just for example purpose. You should use proper error handling instead of panic
 	}
@@ -119,14 +137,15 @@ func StatusHandler(w http.ResponseWriter, r *http.Request) {
 	var (
 		id        int
 		reference string
+		status    string
 	)
-	rows, err := db.Query("select id, reference from transactions where id = ?", 1)
+	rows, err := db.Query("select id, reference, status from transactions where reference = ?", requestId)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		err := rows.Scan(&id, &reference)
+		err := rows.Scan(&id, &reference, &status)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -134,10 +153,12 @@ func StatusHandler(w http.ResponseWriter, r *http.Request) {
 
 		w.WriteHeader(http.StatusOK)
 		// w.Header().Set("Content-Type", "application/json")
-		// // io.WriteString(w, `{"result": true}`)
+		// io.WriteString(w, `{"result": true}`)
 		io.WriteString(w, reference)
+		io.WriteString(w, ": "+status)
 
 	}
+
 	err = rows.Err()
 	if err != nil {
 		log.Fatal(err)
