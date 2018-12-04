@@ -3,12 +3,26 @@ package main
 import (
 	"fmt"
 
+	"database/sql"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sqs"
+
+	"log"
+
+	_ "github.com/go-sql-driver/mysql"
+)
+
+const (
+	DriverName     = "mysql"
+	DataSourceName = "root:password@/queue"
+	MaxMessages    = 1
+	QueueEndpoint  = "https://sqs.ap-southeast-1.amazonaws.com/799216407651/test"
 )
 
 func main() {
+
 	fmt.Println("WORKER PROCESSOR...")
 
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
@@ -17,7 +31,7 @@ func main() {
 
 	svc := sqs.New(sess)
 
-	qURL := "https://sqs.ap-southeast-1.amazonaws.com/799216407651/test"
+	qURL := QueueEndpoint
 
 	result, err := svc.ReceiveMessage(&sqs.ReceiveMessageInput{
 		AttributeNames: []*string{
@@ -27,7 +41,7 @@ func main() {
 			aws.String(sqs.QueueAttributeNameAll),
 		},
 		QueueUrl:            &qURL,
-		MaxNumberOfMessages: aws.Int64(1),
+		MaxNumberOfMessages: aws.Int64(MaxMessages),
 		VisibilityTimeout:   aws.Int64(20), // 20 seconds
 		WaitTimeSeconds:     aws.Int64(0),
 	})
@@ -36,13 +50,15 @@ func main() {
 		fmt.Println("Error", err)
 		return
 	}
-
 	if len(result.Messages) == 0 {
 		fmt.Println("Received no messages")
 		return
 	}
 
-	resultDelete, err := svc.DeleteMessage(&sqs.DeleteMessageInput{
+	requestId := *result.Messages[0].MessageId
+	data := *result.Messages[0].Body
+
+	_, err = svc.DeleteMessage(&sqs.DeleteMessageInput{
 		QueueUrl:      &qURL,
 		ReceiptHandle: result.Messages[0].ReceiptHandle,
 	})
@@ -52,14 +68,22 @@ func main() {
 		return
 	}
 
-	fmt.Println("Message Deleted", resultDelete)
+	db, err := sql.Open(DriverName, DataSourceName)
 
 	// @TODO -- mysql, update status of request
 
-	fmt.Println("Message Deleted", resultDelete)
+	if err != nil {
+		panic(err.Error()) // Just for example purpose. You should use proper error handling instead of panic
+	}
+	defer db.Close()
 
-	// w.WriteHeader(http.StatusOK)
-	// w.Header().Set("Content-Type", "application/json")
-	// // io.WriteString(w, `{"result": true}`)
-	// io.WriteString(w, resultDelete)
+	stmt, err := db.Prepare("update transactions set status = ?,data = ? where reference = ?")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	//execute query
+	stmt.Exec("completed", data, requestId)
+
+	fmt.Println("Request Id Message Processed", requestId)
 }
